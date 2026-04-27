@@ -1,0 +1,206 @@
+package se.lexicon.eventapi.service;
+
+/**
+ * UNIT TEST (Mocking Strategy)
+ * ----------------------------
+ * This class tests the 'UserServiceImpl' in total isolation.
+ * <p>
+ * WHAT IS MOCKING?
+ * Mocking is a technique where real dependencies (like UserRepository) are replaced
+ * with "fake" objects (Mocks). This allows us to:
+ * 1. Test ONLY the business logic of the service.
+ * 2. Simulate different scenarios (success, errors, exceptions) without a database.
+ * 3. Make the tests extremely fast (no Spring context or database required).
+ * <p>
+ * KEY ANNOTATIONS:
+ * - @ExtendWith(MockitoExtension.class): Initializes Mockito.
+ * - @Mock: Creates a "fake" version of a dependency.
+ * - @InjectMocks: Creates the actual Service and "plugs in" the mocks.
+ * <p>
+ * KEY MOCKITO METHODS:
+ * - when(...).thenReturn(...): Tells a mock how to behave ("When this method is called, return this value").
+ * - verify(...): Checks if a specific method on a mock was actually called.
+ * - times(n): Used with verify to check EXACTLY how many times a method was called.
+ * - never(): Used with verify to ensure a method was NOT called.
+ * - any(), anyString(), anyLong(): Matchers used when we don't care about the exact argument value.
+ */
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import se.lexicon.eventapi.dto.UserRequestDTO;
+import se.lexicon.eventapi.dto.UserResponseDTO;
+import se.lexicon.eventapi.entity.User;
+import se.lexicon.eventapi.exception.DataNotFoundException;
+import se.lexicon.eventapi.exception.DuplicateEntryException;
+import se.lexicon.eventapi.mapper.EntityDtoMapper;
+import se.lexicon.eventapi.repository.UserRepository;
+
+import java.time.Instant;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Optional;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+class UserServiceImplTest {
+
+    @Mock
+    private UserRepository userRepository;
+
+    @Mock
+    private EntityDtoMapper mapper;
+
+    @InjectMocks
+    private UserServiceImpl userService;
+
+    private UserRequestDTO userRequestDTO;
+    private User user;
+    private UserResponseDTO userResponseDTO;
+
+    @BeforeEach
+    void setUp() {
+        userRequestDTO = new UserRequestDTO("test@example.com", "Test User");
+        user = new User();
+        user.setId(1L);
+        user.setEmail("test@example.com");
+        user.setFullName("Test User");
+        // createDate is usually set by @PrePersist, but for mocking we might need it
+
+        userResponseDTO = new UserResponseDTO(1L, "test@example.com", "Test User", Instant.now());
+    }
+
+    @Test
+    @DisplayName("register() should save user and return response")
+    void register_success() {
+        when(userRepository.existsByEmail(userRequestDTO.email())).thenReturn(false);
+
+        when(mapper.toUserEntity(userRequestDTO)).thenReturn(user);
+
+        when(userRepository.save(user)).thenReturn(user);
+
+        when(mapper.toUserResponseDto(user)).thenReturn(userResponseDTO);
+
+        // Act
+        UserResponseDTO result = userService.register(userRequestDTO);
+
+        // Assert
+        assertThat(result).isNotNull();
+        assertThat(result.email()).isEqualTo(userRequestDTO.email());
+
+        // verify(): Checks if a specific method on a mock was actually called.
+        verify(userRepository, times(1)).existsByEmail(anyString());
+        verify(userRepository, times(1)).save(any(User.class));
+    }
+
+    @Test
+    @DisplayName("register() should throw IllegalArgumentException when request is null")
+    void register_nullRequest() {
+        // Act & Assert
+        assertThatThrownBy(() -> userService.register(null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("User request cannot be null");
+    }
+
+    @Test
+    @DisplayName("register() should throw DuplicateEntryException when email already exists")
+    void register_duplicateEmail() {
+        // Arrange
+        when(userRepository.existsByEmail(userRequestDTO.email())).thenReturn(true);
+
+        // Act & Assert
+        assertThatThrownBy(() -> userService.register(userRequestDTO))
+                .isInstanceOf(DuplicateEntryException.class)
+                .hasMessageContaining("Email already exists");
+
+        verify(userRepository, never()).save(any(User.class));
+    }
+
+    @Test
+    @DisplayName("findById() should return UserResponseDTO when user exists")
+    void findById_found() {
+        // Arrange
+        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+        when(mapper.toUserResponseDto(user)).thenReturn(userResponseDTO);
+
+        // Act
+        Optional<UserResponseDTO> result = userService.findById(1L);
+
+        // Assert
+        assertThat(result).isPresent();
+        assertThat(result.get().id()).isEqualTo(1L);
+    }
+
+    @Test
+    @DisplayName("findById() should return empty Optional when user not found")
+    void findById_notFound() {
+        // Arrange
+        when(userRepository.findById(1L)).thenReturn(Optional.empty());
+
+        // Act
+        Optional<UserResponseDTO> result = userService.findById(1L);
+
+        // Assert
+        assertThat(result).isEmpty();
+    }
+
+    @Test
+    @DisplayName("findAll() should return list of UserResponseDTO")
+    void findAll_success() {
+        // Arrange
+        List<User> users = Arrays.asList(user);
+        when(userRepository.findAll()).thenReturn(users);
+        when(mapper.toUserResponseDto(user)).thenReturn(userResponseDTO);
+
+        // Act
+        List<UserResponseDTO> result = userService.findAll();
+
+        // Assert
+        assertThat(result).isNotEmpty();
+        assertThat(result).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("deleteById() should delete user when user exists")
+    void deleteById_success() {
+        // Arrange
+        when(userRepository.existsById(1L)).thenReturn(true);
+
+        // Act
+        userService.deleteById(1L);
+
+        // Assert
+        verify(userRepository, times(1)).deleteById(1L);
+    }
+
+    @Test
+    @DisplayName("deleteById() should throw IllegalArgumentException when ID is null")
+    void deleteById_nullId() {
+        // Act & Assert
+        assertThatThrownBy(() -> userService.deleteById(null))
+                .isInstanceOf(DataNotFoundException.class)
+                .hasMessageContaining("User not found with ID: null");
+    }
+
+    @Test
+    @DisplayName("deleteById() should throw DataNotFoundException when user not found")
+    void deleteById_notFound() {
+        // Arrange
+        when(userRepository.existsById(1L)).thenReturn(false);
+
+        // Act & Assert
+        assertThatThrownBy(() -> userService.deleteById(1L))
+                .isInstanceOf(DataNotFoundException.class)
+                .hasMessageContaining("User not found with ID: 1");
+
+        verify(userRepository, never()).deleteById(anyLong());
+    }
+}

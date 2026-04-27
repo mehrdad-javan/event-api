@@ -1,0 +1,20 @@
+# Build outputs
+target/
+
+# IDE and tooling
+.idea/
+.project
+.classpath
+.settings/
+.mvn/
+.git/
+.gitignore
+
+# OS
+*.log
+*.swp
+*.tmp
+**/.DS_Store
+
+# Node or other extras if any
+node_modules/
